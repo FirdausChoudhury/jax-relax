@@ -227,13 +227,15 @@ class DataModule(BaseDataModule, DataModuleInfoMixin):
     def load_from_path(
         cls, 
         path: str,  # Path to the directory to load `DataModule`
-        config: Dict|DataModuleConfig = None # Configs of `DataModule`
+        config: Dict|DataModuleConfig = None # Configs of `DataModule`. This argument is ignored.
     ) -> DataModule: # Initialized `DataModule` from path
         """Load `DataModule` from a directory."""
+        if config is not None:
+            warnings.warn("Passing `config` will have no effect.")
+        
         path = Path(path)
-        if config is None:
-            config = DataModuleConfig.load_from_json(path / 'config.json')
-        config = validate_configs(config, DataModuleConfig)
+        config = DataModuleConfig.load_from_json(path / 'config.json')
+        # config = validate_configs(config, DataModuleConfig)
         features = FeaturesList.load_from_path(path / 'features')
         label = FeaturesList.load_from_path(path / 'label')
         data = pd.read_csv(path / 'data.csv')
@@ -295,6 +297,15 @@ class DataModule(BaseDataModule, DataModuleInfoMixin):
             return self._get_data(self.config.test_indices)
         else:
             raise ValueError(f"Unknown data name: {name}. Should be one of ['train', 'valid', 'test']")
+    
+    def set_transformations(
+        self, 
+        feature_names_to_transformation: Dict[str, Union[str, Dict, Transformation]], # Dict[feature_name, Transformation]
+    ) -> DataModule:
+        """Reset transformations for features."""
+
+        self._features = self._features.set_transformations(feature_names_to_transformation)
+        return self
     
     def sample(
         self, 
@@ -377,6 +388,7 @@ class DataModule(BaseDataModule, DataModuleInfoMixin):
         'inverse_transform',
         'apply_constraints',
         'compute_reg_loss',
+        'set_transformations',
         'sample'
     ]
 
@@ -394,7 +406,7 @@ def dm_equals(dm1: DataModule, dm2: DataModule):
         train_indices_equals and test_indices_equals
     )
 
-# %% ../nbs/01_data.ipynb 29
+# %% ../nbs/01_data.ipynb 30
 class TabularDataModuleConfigs(DataModuleConfig):
     """!!!Deprecated!!! - Configurator of `TabularDataModule`."""
     def __ini__(self, *args, **kwargs):
@@ -402,7 +414,7 @@ class TabularDataModuleConfigs(DataModuleConfig):
         warnings.warn("TabularDataModuleConfigs is deprecated since v0.2, please use DataModuleConfig instead.", 
                       DeprecationWarning)
 
-# %% ../nbs/01_data.ipynb 30
+# %% ../nbs/01_data.ipynb 31
 class TabularDataModule(DataModule):
     """!!!Deprecated!!! - DataModule for tabular data."""
     def __init__(self, *args, **kwargs):
@@ -412,7 +424,7 @@ class TabularDataModule(DataModule):
         
     __ALL__ = []
 
-# %% ../nbs/01_data.ipynb 32
+# %% ../nbs/01_data.ipynb 33
 DEFAULT_DATA = [
     'adult',
     'heloc',
@@ -437,13 +449,13 @@ DEFAULT_DATA_CONFIGS = {
     } for data in DEFAULT_DATA
 }
 
-# %% ../nbs/01_data.ipynb 37
+# %% ../nbs/01_data.ipynb 38
 def _validate_dataname(data_name: str):
     if data_name not in DEFAULT_DATA:
         raise ValueError(f'`data_name` must be one of {DEFAULT_DATA}, '
             f'but got data_name={data_name}.')
 
-# %% ../nbs/01_data.ipynb 38
+# %% ../nbs/01_data.ipynb 39
 def download_data_module_files(
     data_name: str, # The name of data
     data_parent_dir: Path, # The directory to save data.
@@ -465,7 +477,7 @@ def download_data_module_files(
 
 def load_data(
     data_name: str, # The name of data
-    return_config: bool = False, # Return `data_config `or not
+    return_config: bool = False, # Deprecated
     data_configs: dict = None, # Data configs to override default configuration
 ) -> DataModule | Tuple[DataModule, DataModuleConfig]: # Return `DataModule` or (`DataModule`, `DataModuleConfig`)
     """High-level util function for loading `data` and `data_config`."""
@@ -482,19 +494,20 @@ def load_data(
         download_original_data=True
     )
 
-    # read config
-    conf_path = data_parent_dir / f'{data_name}/data/config.json'
-    config = load_json(conf_path)
-
-    if not (data_configs is None):
-        config.update(data_configs)
-
-    config = DataModuleConfig(**config)
-    data_dir = data_parent_dir / f'{data_name}/data'
-    data_module = DataModule.load_from_path(data_dir, config=config)
-
     if return_config:
-        return data_module, config
-    else:
-        return data_module
+        warnings.warn("`return_config` is deprecated since v0.2. "
+                      "Please access `config` from `DataModule`.", DeprecationWarning)
+
+    # read and override config
+    # comment them for now since we cannot garantee the override configs are valid
+    # conf_path = data_parent_dir / f'{data_name}/data/config.json'
+    # config = load_json(conf_path)
+    # if not (data_configs is None):
+    #     config.update(data_configs)
+    # config = DataModuleConfig(**config)
+
+    data_dir = data_parent_dir / f'{data_name}/data'
+    data_module = DataModule.load_from_path(data_dir, config=data_configs)
+
+    return data_module
 

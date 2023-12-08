@@ -13,7 +13,7 @@ from ..data_module import DataModule
 __all__ = ['ProtoCFConfig', 'ProtoCF']
 
 # %% ../../nbs/methods/03_proto.ipynb 5
-@auto_reshaping('x')
+@ft.partial(jit, static_argnums=(2, 3, 9, 10, 12))
 def _proto_cf(
     x: Array, 
     y_target: Array,
@@ -30,9 +30,17 @@ def _proto_cf(
     apply_constraints_fn: Callable,
 ) -> Array:
     
+    @jit
     def encode(x):
         return ae.encoder(x)
     
+    @jit
+    def cost_fn(cf, x):
+        # For some reasons, calling jnp.linalg.norm(cf - x) 
+        # directly will lead to significant performance drop.
+        return beta * jnp.abs(cf - x).mean() + optax.l2_loss(cf, x).mean()
+    
+    @ft.partial(jit, static_argnums=(3))
     def loss_fn(
         cf: Array,
         x: Array,
@@ -41,7 +49,8 @@ def _proto_cf(
     ):
         y_cf = pred_fn(cf)
         loss_val = c * validity_fn(y_target, y_cf)
-        loss_cost = beta * jnp.linalg.norm(cf - x, ord=1) + jnp.linalg.norm(cf - x, ord=2)
+        # loss_cost = beta * jnp.linalg.norm(cf - x, ord=1) + jnp.linalg.norm(cf - x, ord=2)
+        loss_cost = cost_fn(cf, x)
         loss_ae = gamma * jnp.square(ae(cf) - cf).mean()
         loss_proto = theta * jnp.square(
             jnp.linalg.norm(encode(cf) - encode(sampled_data).sum(axis=0) / n_sampled_data, ord=2)
@@ -142,11 +151,7 @@ class ProtoCF(ParametricCFModule):
         self._is_trained = True
         # self.sampled_data = data.sample(self.config.n_samples)
         sampled_xs, sampled_ys = data.sample(self.config.n_samples)
-        self.sampled_data = (sampled_xs, sampled_ys)
-        self.sampled_data_dict = {
-            label.item(): sampled_xs[(sampled_ys == label).reshape(-1)]
-                for label in jnp.unique(sampled_ys)
-        }
+        self.sampled_data = tuple(map(jax.device_put, (sampled_xs, sampled_ys)))
         return self
     
     @auto_reshaping('x')
@@ -161,7 +166,7 @@ class ProtoCF(ParametricCFModule):
         if y_target is None:
             y_target = 1 - pred_fn(x)
         else:
-            y_target = y_target.reshape(1, -1)
+            y_target = jnp.array(y_target, copy=True).reshape(1, -1)
 
         sampled_data = jnp.where(
             y_target.argmax(axis=1) == self.sampled_data[1],
@@ -184,3 +189,4 @@ class ProtoCF(ParametricCFModule):
             validity_fn=keras.losses.get({'class_name': self.config.validity_fn, 'config': {'reduction': None}}),
             apply_constraints_fn=self.apply_constraints,
         )
+

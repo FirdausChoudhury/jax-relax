@@ -9,7 +9,8 @@ from ..utils import auto_reshaping, validate_configs, get_config, grad_update
 from ..ml_model import MLP, MLPBlock
 from ..data_module import DataModule
 from jax.scipy.stats.norm import logpdf as gaussian_logpdf
-from keras_core.random import SeedGenerator
+from keras.random import SeedGenerator
+
 
 # %% auto 0
 __all__ = ['Encoder', 'Decoder', 'kl_divergence', 'VAEGaussCat', 'CLUEConfig', 'get_reconstruction_loss_fn', 'CLUE']
@@ -116,7 +117,7 @@ class VAEGaussCat(keras.Model):
         return reconstruct_x
 
 # %% ../../nbs/methods/08_clue.ipynb 10
-@auto_reshaping('x')
+@ft.partial(jit, static_argnums=(3, 4, 6, 9, 12, 13))
 def _clue_generate(
     x: Array,
     rng_key: jrand.PRNGKey,

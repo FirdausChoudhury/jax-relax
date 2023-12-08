@@ -191,7 +191,8 @@ def prepare_cf_module(
     cf_module.set_compute_reg_loss_fn(data_module.compute_reg_loss)
     train_config = train_config or {}
     if isinstance(cf_module, ParametricCFModule):
-        cf_module.train(data_module, pred_fn=pred_fn, **train_config)
+        if not cf_module.is_trained:
+            cf_module.train(data_module, pred_fn=pred_fn, **train_config)
     cf_module.before_generate_cf()
     return cf_module
 
@@ -228,11 +229,12 @@ def generate_cf_explanations(
     n_instances = data.xs.shape[0]
     # Prepare random number generator keys.
     rng_keys = prepare_rng_keys(rng_key, n_instances)
-    y_targets = 1 - pred_fn(data.xs).round()
+    y_targets = 1 - pred_fn(data.xs)
     
     # Generate CF explanations.
     start_time = time.time()
     cfs = strategy(cf_module.generate_cf, data.xs, pred_fn, y_targets, rng_keys)
+    # cfs = jax.vmap(cf_module.generate_cf, in_axes=(0, None, 0, 0))(data.xs, pred_fn, y_targets, rng_keys)
     total_time = time.time() - start_time
 
     # Return CF explanations.

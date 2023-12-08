@@ -9,7 +9,7 @@ from ..utils import auto_reshaping, grad_update, validate_configs, get_config
 from ..data_utils import Feature, FeaturesList
 from ..ml_model import MLP, MLPBlock
 from ..data_module import DataModule
-from keras_core.random import SeedGenerator
+from keras.random import SeedGenerator
 
 # %% auto 0
 __all__ = ['CHVAE', 'CCHVAEConfig', 'CCHVAE']
@@ -107,7 +107,7 @@ def _hyper_sphere_coordindates(
     return candidates
      
 
-@auto_reshaping('x')
+@ft.partial(jit, static_argnums=(3, 4, 5, 7))
 def _cchvae(
     x: Array,
     rng_key: jrand.PRNGKey,
@@ -170,12 +170,12 @@ def _cchvae(
 # %% ../../nbs/methods/06_cchvae.ipynb 7
 class CCHVAEConfig(BaseConfig):
     vae_layers: List[int] = Field(
-        [64, 32, 16, 8], description="List of hidden layer sizes for VAE."
+        [20, 16, 14, 12], description="List of hidden layer sizes for VAE."
     )
     opt_name: str = Field("adam", description="Optimizer name of VAE.")
     vae_lr: float = Field(0.001, description="Learning rate of VAE.")
     max_steps: int = Field(100, description="Max steps")
-    n_search_samples: int = Field(300, description="Number of generated candidate counterfactuals.")
+    n_search_samples: int = Field(100, description="Number of generated candidate counterfactuals.")
     step_size: float = Field(0.1, description="Step size")    
 
 # %% ../../nbs/methods/06_cchvae.ipynb 8

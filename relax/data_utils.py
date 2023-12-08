@@ -257,39 +257,32 @@ class IdentityTransformation(Transformation):
         return self
 
 # %% ../nbs/01_data.utils.ipynb 27
+PREPROCESSING_TRANSFORMATIONS = {
+    'ohe': OneHotTransformation,
+    'minmax': MinMaxTransformation,
+    'ordinal': OrdinalTransformation,
+    'identity': IdentityTransformation,
+}
+
+# %% ../nbs/01_data.utils.ipynb 28
 class Feature:
+    """THe feature class which represents a column in the dataset."""
     
     def __init__(
         self,
         name: str,
         data: np.ndarray,
-        transformation: str | Transformation,
+        transformation: str | Transformation | dict,
         transformed_data = None,
         is_immutable: bool = False,
         is_categorical: bool = None,
     ):
         self.name = name
-        self.data = data
-        if isinstance(transformation, str):
-            self.transformation = PREPROCESSING_TRANSFORMATIONS[transformation]()
-        elif isinstance(transformation, Transformation):
-            self.transformation = transformation
-        elif isinstance(transformation, dict):
-            # TODO: only supported transformation can be used for serialization
-            t_name = transformation['name']
-            if t_name not in PREPROCESSING_TRANSFORMATIONS.keys():
-                raise ValueError("Only supported transformation can be inited from dict. "
-                                 f"Got {t_name}, but should be one of {PREPROCESSING_TRANSFORMATIONS.keys()}.")
-            self.transformation = PREPROCESSING_TRANSFORMATIONS[t_name]().from_dict(transformation)
-        else:
-            raise ValueError(f"Unknown transformer {transformation}")
+        self._data = data
+        self._transformation = self._dispatch_transformation(transformation)
         self._transformed_data = transformed_data
-        self.is_immutable = is_immutable
-        if is_categorical is not None:
-            self._is_categorical = is_categorical
-            assert self._is_categorical == self.transformation.is_categorical
-        else:
-            self._is_categorical = self.transformation.is_categorical
+        self._is_immutable = is_immutable
+        self._is_categorical = self._init_is_categorical(is_categorical)
 
     def with_transformed_data(
         self,
@@ -307,6 +300,18 @@ class Feature:
             is_immutable=self.is_immutable,
             is_categorical=self.is_categorical,
         )
+    
+    @property
+    def data(self) -> jax.Array:
+        return self._data
+    
+    @property
+    def is_immutable(self) -> bool:
+        return self._is_immutable
+    
+    @property
+    def transformation(self) -> Transformation:
+        return self._transformation
     
     @property
     def is_categorical(self) -> bool:
@@ -334,23 +339,49 @@ class Feature:
         }
     
     def __repr__(self):
-        # return f"Feature(" \
-        #        f"name={self.name}, \ndata={self.data}, \n" \
-        #        f"transformed_data={self.transformed_data}, \n" \
-        #        f"transformer={self.transformation}, \n" \
-        #        f"is_immutable={self.is_immutable})"
-        dict_repr = self.to_dict()
-        return f"Feature(" + \
-               f",\n".join([f"{k}={v}" for k, v in dict_repr.items()]) + f")"
+        return "Feature(" + ",\n".join([
+            f"{k}={v}" for k, v in self.to_dict().items()]) + ")"
     
     __str__ = __repr__
 
     def __get_item__(self, idx):
-        return {
+        return self.to_dict().update({
             'data': self.data[idx],
             'transformed_data': self.transformed_data[idx],
-        }
+        })
+    
+    def _dispatch_transformation(self, transformation: str | dict | Transformation):
+        T = PREPROCESSING_TRANSFORMATIONS
+        if isinstance(transformation, str):
+            if transformation not in T.keys():
+                raise ValueError(f"Unknown transformation: {transformation}")
+            return T[transformation]()
+        elif isinstance(transformation, dict):
+            # TODO: only supported transformation can be used for serialization
+            t_name = transformation['name']
+            if t_name not in T.keys():
+                raise ValueError("Only supported transformation can be inited from dict. "
+                                 f"Got {t_name}, but should be one of {T.keys()}.")
+            return T[t_name]().from_dict(transformation)
+        elif isinstance(transformation, Transformation):
+            return transformation
+        else:
+            raise ValueError(f"Unknown transformation: {transformation}")
+        
+    def _init_is_categorical(self, is_categorical: bool = None):
+        if is_categorical is None:
+            return self.transformation.is_categorical
+        else:
+            if hasattr(self, '_is_categorical'):
+                assert self.is_categorical == is_categorical
+            return is_categorical
 
+    def set_transformation(self, transformation: str | dict | Transformation) -> Feature:
+        self._transformation = self._dispatch_transformation(transformation)
+        self._is_categorical = self._init_is_categorical()
+        self._transformed_data = None # Reset transformed data
+        return self
+    
     def fit(self):
         self.transformation.fit(self.data)
         return self
@@ -374,14 +405,6 @@ class Feature:
     
     def compute_reg_loss(self, xs, cfs, hard: bool = False):
         return self.transformation.compute_reg_loss(xs, cfs, hard)
-
-# %% ../nbs/01_data.utils.ipynb 28
-PREPROCESSING_TRANSFORMATIONS = {
-    'ohe': OneHotTransformation,
-    'minmax': MinMaxTransformation,
-    'ordinal': OrdinalTransformation,
-    'identity': IdentityTransformation,
-}
 
 # %% ../nbs/01_data.utils.ipynb 31
 class FeaturesList:
@@ -421,6 +444,20 @@ class FeaturesList:
         else:
             self.pose = 0
             raise StopIteration
+        
+    # Indexing
+    def __getitem__(self, idx: str | list[str]) -> Feature | list[Feature]:
+        if not hasattr(self, "_feature_name_list_indices"):
+            self._feature_name_list_indices = {feat.name: i for i, feat in enumerate(self._features)}
+        indices = self._feature_name_list_indices
+        if isinstance(idx, str):
+            if idx not in indices:
+                raise ValueError(f"Invalid feature name: {idx}")
+            return self._features[indices[idx]]
+        elif isinstance(idx, list):
+            return [self[i] for i in idx]
+        else:
+            raise ValueError(f"Invalid idx type: {type(idx).__name__}")
     
     #############################
     # Properties
@@ -446,7 +483,7 @@ class FeaturesList:
         return self._feature_name_indices
     
     @property
-    def transformed_data(self):
+    def transformed_data(self) -> jax.Array:
         if not hasattr(self, "_transformed_data") or self._transformed_data is None:
             self._transform_data()
         return self._transformed_data
@@ -466,6 +503,19 @@ class FeaturesList:
                       for feat, (start, end) in self.features_and_indices],
         )
     
+    def set_transformations(self, feature_names_to_transformation: dict[str, Transformation]) -> FeaturesList:
+        """Set the transformations for the features."""
+        
+        if not isinstance(feature_names_to_transformation, dict):
+            raise ValueError(f"Invalid feature_names_to_transformation type: "
+                             f"{type(feature_names_to_transformation).__name__}."
+                             f"Should be dict[str, Transformation]")
+        
+        for feat, transformation in feature_names_to_transformation.items():
+            self[feat].set_transformation(transformation)
+        self._transformed_data = None # Reset transformed data
+        return self
+        
     def _transform_data(self):
         self._feature_indices = []
         self._feature_name_indices = {}
@@ -499,11 +549,8 @@ class FeaturesList:
         return orignial_data
 
     def apply_constraints(self, xs, cfs, hard: bool = False):
-        constrainted_cfs = []
-        for feat, (start, end) in self.features_and_indices:
-            _cfs = feat.apply_constraints(xs[:, start:end], cfs[:, start:end], hard)
-            constrainted_cfs.append(_cfs)
-        return jnp.concatenate(constrainted_cfs, axis=-1)
+        return jnp.concatenate(
+            [feat.apply_constraints(xs[:, start:end], cfs[:, start:end], hard) for feat, (start, end) in self.features_and_indices], axis=-1)
     
     def compute_reg_loss(self, xs, cfs, hard: bool = False):
         reg_loss = 0.
